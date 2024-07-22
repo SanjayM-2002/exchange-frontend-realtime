@@ -9,48 +9,74 @@ import {
 } from '../../utils/httpClient';
 import { AskTable } from './AskTable';
 import { BidTable } from './BidTable';
-import Loader from '../common/Loader';
+
+import { SignalingManager } from '@/app/utils/SignalingManager';
 
 export function Depth({ market }: { market: string }) {
   const [bids, setBids] = useState<[string, string][]>();
   const [asks, setAsks] = useState<[string, string][]>();
   const [price, setPrice] = useState<string>();
-  const [isLoading, setIsLoading] = useState<Boolean>(false);
 
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        const depthData = await getDepth(market);
-        setBids(depthData.bids.reverse());
-        setAsks(depthData.asks);
+    SignalingManager.getInstance().registerCallback(
+      'depth',
+      (data: any) => {
+        setBids((originalBids) => {
+          const bidsAfterUpdate = [...(originalBids || [])];
 
-        const tickerData = await getTicker(market);
-        setPrice(tickerData.lastPrice);
+          for (let i = 0; i < bidsAfterUpdate.length; i++) {
+            for (let j = 0; j < data.bids.length; j++) {
+              if (bidsAfterUpdate[i][0] === data.bids[j][0]) {
+                bidsAfterUpdate[i][1] = data.bids[j][1];
+                break;
+              }
+            }
+          }
 
-        // Uncomment if you want to use these functions
-        // const tradesData = await getTrades(market);
-        // setPrice(tradesData[0].price);
+          return bidsAfterUpdate.filter((bid) => parseFloat(bid[1]) !== 0);
+        });
 
-        // const klinesData = await getKlines(market, "1h", 1640099200, 1640100800);
-        // setPrice(klinesData[0].close);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+        setAsks((originalAsks) => {
+          const asksAfterUpdate = [...(originalAsks || [])];
 
-    fetchData();
-  }, [market]);
-
-  if (isLoading) {
-    return (
-      <>
-        <Loader />
-      </>
+          for (let i = 0; i < asksAfterUpdate.length; i++) {
+            for (let j = 0; j < data.asks.length; j++) {
+              if (asksAfterUpdate[i][0] === data.asks[j][0]) {
+                asksAfterUpdate[i][1] = data.asks[j][1];
+                break;
+              }
+            }
+          }
+          return asksAfterUpdate.filter((ask) => parseFloat(ask[1]) !== 0);
+        });
+      },
+      `DEPTH-${market}`
     );
-  }
+
+    SignalingManager.getInstance().sendMessage({
+      method: 'SUBSCRIBE',
+      params: [`depth.${market}`],
+    });
+
+    getDepth(market).then((d) => {
+      setBids(d.bids.reverse());
+      setAsks(d.asks);
+    });
+
+    getTicker(market).then((t) => setPrice(t.lastPrice));
+    getTrades(market).then((t) => setPrice(t[0].price));
+    // getKlines(market, "1h", 1640099200, 1640100800).then(t => setPrice(t[0].close));
+    return () => {
+      SignalingManager.getInstance().sendMessage({
+        method: 'UNSUBSCRIBE',
+        params: [`depth.200ms.${market}`],
+      });
+      SignalingManager.getInstance().deRegisterCallback(
+        'depth',
+        `DEPTH-${market}`
+      );
+    };
+  }, []);
 
   return (
     <div>
